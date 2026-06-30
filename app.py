@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import platform
 import subprocess
+from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -45,8 +46,10 @@ class AccurateXmlApp(ctk.CTk):
         self.output_var = ctk.StringVar(value="")
         self.status_var = ctk.StringVar(value="Pilih file Excel untuk mulai.")
         self.last_output_path: Path | None = None
+        self.history_list: ctk.CTkTextbox | None = None
 
         self._build_layout()
+        self.add_history("Aplikasi dibuka.")
 
     def _build_layout(self) -> None:
         self._configure_tree_style()
@@ -96,15 +99,31 @@ class AccurateXmlApp(ctk.CTk):
             text_color=TEXT_MUTED,
         ).grid(row=1, column=0, sticky="w", padx=22, pady=(0, 18))
 
+        action_row = ctk.CTkFrame(controls, fg_color="transparent")
+        action_row.grid(row=2, column=0, padx=22, pady=(0, 12), sticky="ew")
+        action_row.grid_columnconfigure(0, weight=1)
+        action_row.grid_columnconfigure(1, weight=1)
+
         ctk.CTkButton(
-            controls,
+            action_row,
             text="Pilih File Excel",
             height=42,
             corner_radius=6,
             fg_color=ACCENT,
             hover_color=ACCENT_DARK,
             command=self.select_excel,
-        ).grid(row=2, column=0, padx=22, pady=(0, 12), sticky="ew")
+        ).grid(row=0, column=0, padx=(0, 8), sticky="ew")
+
+        ctk.CTkButton(
+            action_row,
+            text="Refresh",
+            height=42,
+            corner_radius=6,
+            fg_color="#e2e8f0",
+            hover_color="#cbd5e1",
+            text_color=TEXT_MAIN,
+            command=self.refresh_current_file,
+        ).grid(row=0, column=1, padx=(8, 0), sticky="ew")
 
         file_box = ctk.CTkFrame(controls, fg_color="#f8fafc", corner_radius=6, border_width=1, border_color="#e2e8f0")
         file_box.grid(row=3, column=0, padx=22, pady=(0, 18), sticky="ew")
@@ -197,7 +216,7 @@ class AccurateXmlApp(ctk.CTk):
         ).grid(row=12, column=0, padx=22, pady=(0, 22), sticky="ew")
 
         status_card = ctk.CTkFrame(controls, fg_color="#eff6ff", corner_radius=6, border_width=1, border_color="#bfdbfe")
-        status_card.grid(row=13, column=0, padx=22, pady=(0, 22), sticky="ew")
+        status_card.grid(row=13, column=0, padx=22, pady=(0, 14), sticky="ew")
         status_card.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(
             status_card,
@@ -208,6 +227,26 @@ class AccurateXmlApp(ctk.CTk):
             font=ctk.CTkFont(size=12),
             text_color="#1e3a8a",
         ).grid(row=0, column=0, padx=12, pady=12, sticky="ew")
+
+        ctk.CTkLabel(
+            controls,
+            text="History",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color=TEXT_MAIN,
+        ).grid(row=14, column=0, sticky="w", padx=22, pady=(0, 6))
+
+        self.history_list = ctk.CTkTextbox(
+            controls,
+            height=126,
+            corner_radius=6,
+            fg_color="#0f172a",
+            text_color="#dbeafe",
+            border_width=0,
+            font=ctk.CTkFont(size=12),
+            wrap="word",
+        )
+        self.history_list.grid(row=15, column=0, padx=22, pady=(0, 22), sticky="ew")
+        self.history_list.configure(state="disabled")
 
         preview_frame = ctk.CTkFrame(app_body, fg_color=PANEL_BG, corner_radius=8, border_width=1, border_color="#d9e2ec")
         preview_frame.grid(row=0, column=1, sticky="nsew")
@@ -275,22 +314,46 @@ class AccurateXmlApp(ctk.CTk):
             ],
         )
         if not path:
+            self.add_history("Pilih Excel dibatalkan.")
             return
 
         self.excel_path = Path(path)
         self.file_var.set(str(self.excel_path))
         self.output_var.set(str(self._default_output_path()))
+        self.add_history(f"File Excel dipilih: {self.excel_path.name}")
 
         try:
             self.sheet_names = get_sheet_names(self.excel_path)
         except Exception as exc:
             messagebox.showerror("Gagal membaca Excel", str(exc))
             self.status_var.set("Gagal membaca file Excel.")
+            self.add_history(f"Gagal membaca Excel: {exc}")
             return
 
         self.sheet_var.set(self.sheet_names[0] if self.sheet_names else "")
         self.sheet_menu.configure(values=self.sheet_names or [""])
         self.load_preview()
+
+    def refresh_current_file(self) -> None:
+        if not self.excel_path:
+            self.status_var.set("Belum ada file Excel untuk di-refresh.")
+            self.add_history("Refresh dibatalkan: belum ada file Excel.")
+            return
+
+        try:
+            self.sheet_names = get_sheet_names(self.excel_path)
+        except Exception as exc:
+            messagebox.showerror("Refresh gagal", str(exc))
+            self.status_var.set("Refresh file Excel gagal.")
+            self.add_history(f"Refresh gagal: {exc}")
+            return
+
+        current_sheet = self.sheet_var.get()
+        if current_sheet not in self.sheet_names:
+            self.sheet_var.set(self.sheet_names[0] if self.sheet_names else "")
+        self.sheet_menu.configure(values=self.sheet_names or [""])
+        self.load_preview()
+        self.add_history(f"Refresh selesai: {self.excel_path.name}")
 
     def select_output(self) -> str | None:
         default_path = self._default_output_path()
@@ -304,7 +367,9 @@ class AccurateXmlApp(ctk.CTk):
         )
         if path:
             self.output_var.set(path)
+            self.add_history(f"Lokasi output dipilih: {Path(path).name}")
             return path
+        self.add_history("Save As dibatalkan.")
         return None
 
     def load_preview(self) -> None:
@@ -316,6 +381,7 @@ class AccurateXmlApp(ctk.CTk):
         except Exception as exc:
             messagebox.showerror("Gagal preview", str(exc))
             self.status_var.set("Gagal menampilkan preview.")
+            self.add_history(f"Preview gagal: {exc}")
             return
 
         self.preview_table.delete(*self.preview_table.get_children())
@@ -330,10 +396,12 @@ class AccurateXmlApp(ctk.CTk):
             self.preview_table.insert("", "end", values=values)
 
         self.status_var.set(f"Preview {len(rows)} baris pertama dari sheet {self.sheet_var.get()}.")
+        self.add_history(f"Preview sheet {self.sheet_var.get()}: {len(rows)} baris.")
 
     def generate_xml(self) -> None:
         if not self.excel_path:
             messagebox.showwarning("File belum dipilih", "Pilih file Excel terlebih dahulu.")
+            self.add_history("Export dibatalkan: file Excel belum dipilih.")
             return
 
         output_path = self.output_var.get().strip()
@@ -352,10 +420,12 @@ class AccurateXmlApp(ctk.CTk):
         except Exception as exc:
             messagebox.showerror("Generate gagal", str(exc))
             self.status_var.set("Generate XML gagal.")
+            self.add_history(f"Export gagal: {exc}")
             return
 
         self.last_output_path = Path(output_path)
         self.status_var.set(f"Berhasil generate {total} baris ke {output_path}")
+        self.add_history(f"Export sukses: {total} baris ke {Path(output_path).name}")
         should_open = messagebox.askyesno(
             "Selesai",
             f"XML berhasil dibuat:\n{output_path}\n\nBuka folder hasil export sekarang?",
@@ -367,6 +437,7 @@ class AccurateXmlApp(ctk.CTk):
         output_text = self.output_var.get().strip()
         folder = Path(output_text).expanduser().parent if output_text else self._downloads_dir()
         folder.mkdir(parents=True, exist_ok=True)
+        self.add_history(f"Buka folder output: {folder}")
 
         try:
             system = platform.system()
@@ -378,6 +449,7 @@ class AccurateXmlApp(ctk.CTk):
                 subprocess.run(["xdg-open", str(folder)], check=False)
         except Exception as exc:
             messagebox.showerror("Gagal buka folder", str(exc))
+            self.add_history(f"Gagal buka folder: {exc}")
 
     def _default_output_path(self) -> Path:
         filename = "hasil.xml"
@@ -388,6 +460,15 @@ class AccurateXmlApp(ctk.CTk):
     def _downloads_dir(self) -> Path:
         downloads = Path.home() / "Downloads"
         return downloads if downloads.exists() else Path.home()
+
+    def add_history(self, message: str) -> None:
+        if self.history_list is None:
+            return
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.history_list.configure(state="normal")
+        self.history_list.insert("end", f"[{timestamp}] {message}\n")
+        self.history_list.see("end")
+        self.history_list.configure(state="disabled")
 
 
 if __name__ == "__main__":
