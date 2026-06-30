@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import getpass
 import platform
+import socket
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -47,9 +49,19 @@ class AccurateXmlApp(ctk.CTk):
         self.status_var = ctk.StringVar(value="Pilih file Excel untuk mulai.")
         self.last_output_path: Path | None = None
         self.history_list: ctk.CTkTextbox | None = None
+        self.log_file = self._app_data_dir() / "activity.log"
 
         self._build_layout()
+        self.load_history()
+        self._log_pc_info()
         self.add_history("Aplikasi dibuka.")
+
+        # Track setting changes
+        self.sheet_var.trace_add("write", self._on_sheet_changed)
+        self.document_type_var.trace_add("write", self._on_document_type_changed)
+
+        # Log when app is closed
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _build_layout(self) -> None:
         self._configure_tree_style()
@@ -81,7 +93,7 @@ class AccurateXmlApp(ctk.CTk):
         app_body.grid_columnconfigure(1, weight=1)
         app_body.grid_rowconfigure(0, weight=1)
 
-        controls = ctk.CTkFrame(app_body, fg_color=PANEL_BG, corner_radius=8, border_width=1, border_color="#d9e2ec")
+        controls = ctk.CTkScrollableFrame(app_body, fg_color=PANEL_BG, corner_radius=8, border_width=1, border_color="#d9e2ec", width=340)
         controls.grid(row=0, column=0, sticky="nsw", padx=(0, 18))
         controls.grid_columnconfigure(0, weight=1)
 
@@ -248,6 +260,16 @@ class AccurateXmlApp(ctk.CTk):
         self.history_list.grid(row=15, column=0, padx=22, pady=(0, 22), sticky="ew")
         self.history_list.configure(state="disabled")
 
+        ctk.CTkButton(
+            controls,
+            text="Buka File Log",
+            height=36,
+            corner_radius=6,
+            fg_color="#1e293b",
+            hover_color="#0f172a",
+            command=self.open_log_file,
+        ).grid(row=16, column=0, padx=22, pady=(0, 22), sticky="ew")
+
         preview_frame = ctk.CTkFrame(app_body, fg_color=PANEL_BG, corner_radius=8, border_width=1, border_color="#d9e2ec")
         preview_frame.grid(row=0, column=1, sticky="nsew")
         preview_frame.grid_columnconfigure(0, weight=1)
@@ -410,12 +432,18 @@ class AccurateXmlApp(ctk.CTk):
             if not output_path:
                 return
 
+        sheet = self.sheet_var.get()
+        doc_type = self.document_type_var.get()
+        self.add_history(
+            f"Export dimulai | File: {self.excel_path.name} | Sheet: {sheet} | Jenis: {doc_type} | Output: {output_path}"
+        )
+
         try:
             total = excel_to_accurate_xml(
                 self.excel_path,
                 output_path,
-                sheet_name=self.sheet_var.get(),
-                document_type=self.document_type_var.get(),
+                sheet_name=sheet,
+                document_type=doc_type,
             )
         except Exception as exc:
             messagebox.showerror("Generate gagal", str(exc))
@@ -425,7 +453,9 @@ class AccurateXmlApp(ctk.CTk):
 
         self.last_output_path = Path(output_path)
         self.status_var.set(f"Berhasil generate {total} baris ke {output_path}")
-        self.add_history(f"Export sukses: {total} baris ke {Path(output_path).name}")
+        self.add_history(
+            f"Export sukses | {total} baris | File: {self.excel_path.name} | Sheet: {sheet} | Jenis: {doc_type} | Output: {Path(output_path).name}"
+        )
         should_open = messagebox.askyesno(
             "Selesai",
             f"XML berhasil dibuat:\n{output_path}\n\nBuka folder hasil export sekarang?",
@@ -462,13 +492,84 @@ class AccurateXmlApp(ctk.CTk):
         return downloads if downloads.exists() else Path.home()
 
     def add_history(self, message: str) -> None:
-        if self.history_list is None:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        line = f"[{timestamp}] {message}"
+        self._write_log(line)
+        self._append_history_line(line)
+
+    def load_history(self) -> None:
+        if self.history_list is None or not self.log_file.exists():
             return
-        timestamp = datetime.now().strftime("%H:%M:%S")
+        lines = self.log_file.read_text(encoding="utf-8", errors="replace").splitlines()
+        recent_lines = lines[-200:]
         self.history_list.configure(state="normal")
-        self.history_list.insert("end", f"[{timestamp}] {message}\n")
+        self.history_list.delete("1.0", "end")
+        if recent_lines:
+            self.history_list.insert("end", "\n".join(recent_lines) + "\n")
         self.history_list.see("end")
         self.history_list.configure(state="disabled")
+
+    def open_log_file(self) -> None:
+        self.log_file.parent.mkdir(parents=True, exist_ok=True)
+        self.log_file.touch(exist_ok=True)
+        self.add_history("File log dibuka.")
+        try:
+            system = platform.system()
+            if system == "Darwin":
+                subprocess.run(["open", str(self.log_file)], check=False)
+            elif system == "Windows":
+                subprocess.run(["notepad", str(self.log_file)], check=False)
+            else:
+                subprocess.run(["xdg-open", str(self.log_file)], check=False)
+        except Exception as exc:
+            messagebox.showerror("Gagal buka file log", str(exc))
+            self.add_history(f"Gagal buka file log: {exc}")
+
+    def _append_history_line(self, line: str) -> None:
+        if self.history_list is None:
+            return
+        self.history_list.configure(state="normal")
+        self.history_list.insert("end", f"{line}\n")
+        self.history_list.see("end")
+        self.history_list.configure(state="disabled")
+
+    def _write_log(self, line: str) -> None:
+        self.log_file.parent.mkdir(parents=True, exist_ok=True)
+        with self.log_file.open("a", encoding="utf-8") as file:
+            file.write(f"{line}\n")
+
+    def _log_pc_info(self) -> None:
+        """Log identitas PC user saat aplikasi dibuka untuk audit trail."""
+        try:
+            username = getpass.getuser()
+        except Exception:
+            username = "unknown"
+        hostname = socket.gethostname()
+        os_info = f"{platform.system()} {platform.release()}"
+        self.add_history(f"PC Info | User: {username} | Host: {hostname} | OS: {os_info}")
+
+    def _on_sheet_changed(self, *_args: object) -> None:
+        """Log saat user mengganti pilihan sheet."""
+        sheet = self.sheet_var.get()
+        if sheet:
+            self.add_history(f"Sheet diganti ke: {sheet}")
+
+    def _on_document_type_changed(self, *_args: object) -> None:
+        """Log saat user mengganti jenis dokumen XML."""
+        doc_type = self.document_type_var.get()
+        if doc_type:
+            self.add_history(f"Jenis XML diganti ke: {doc_type}")
+
+    def _on_close(self) -> None:
+        """Log saat aplikasi ditutup, lalu keluar."""
+        self.add_history("Aplikasi ditutup.")
+        self.destroy()
+
+    def _app_data_dir(self) -> Path:
+        if platform.system() == "Windows":
+            base = Path.home() / "AppData" / "Local"
+            return base / "AccurateXmlGenerator"
+        return Path.home() / ".accurate_xml_generator"
 
 
 if __name__ == "__main__":
