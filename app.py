@@ -88,10 +88,21 @@ class AccurateXmlApp(ctk.CTk):
         ).grid(row=1, column=0, sticky="w", pady=(4, 0))
 
         app_body = ctk.CTkFrame(self, fg_color="transparent")
-        app_body.grid(row=1, column=0, sticky="nsew", padx=28, pady=(8, 20))
+        app_body.grid(row=1, column=0, sticky="nsew", padx=28, pady=(8, 8))
         app_body.grid_columnconfigure(0, minsize=360)
         app_body.grid_columnconfigure(1, weight=1)
         app_body.grid_rowconfigure(0, weight=1)
+
+        footer = ctk.CTkFrame(self, corner_radius=0, fg_color=WINDOW_BG, height=30)
+        footer.grid(row=2, column=0, sticky="ew", padx=28, pady=(0, 10))
+        footer.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            footer,
+            text="Powered By DevOps LST",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color=TEXT_MUTED,
+            anchor="center",
+        ).grid(row=0, column=0, sticky="ew")
 
         controls = ctk.CTkScrollableFrame(app_body, fg_color=PANEL_BG, corner_radius=8, border_width=1, border_color="#d9e2ec", width=340)
         controls.grid(row=0, column=0, sticky="nsw", padx=(0, 18))
